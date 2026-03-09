@@ -38,17 +38,17 @@ All options are under `UDP LCD Controller Configuration`:
 
 | Option                        | Default  | Range        | Description                              |
 |-------------------------------|----------|--------------|------------------------------------------|
-| `UDP_LCD_PORT`                | 5000     | 1024-65535   | UDP listening port                       |
+| `UDP_LCD_PORT`                | 2400     | 1024-65535   | UDP listening port                       |
 | `LCD_I2C_SDA_PIN`            | 4        | 0-21         | I2C SDA GPIO                             |
 | `LCD_I2C_SCL_PIN`            | 5        | 0-21         | I2C SCL GPIO                             |
 | `LCD_I2C_ADDR`               | 0x3F     | 0x38-0x3F    | PCF8574A I2C address                     |
 | `LCD_DEFAULT_COLS`           | 20       | —            | Default LCD columns                      |
 | `LCD_DEFAULT_ROWS`           | 4        | 1-4          | Default LCD rows                         |
 | `LCD_I2C_FREQ_HZ`           | 100000   | —            | I2C clock frequency (Hz)                 |
-| `HEARTBEAT_LED_GPIO`        | 8        | -1 to 21     | Heartbeat indicator LED (-1 = disabled)  |
-| `WIFI_LED_GPIO`             | 10       | -1 to 21     | Wi-Fi status LED (-1 = disabled)         |
+| `HEARTBEAT_LED_GPIO`        | 12       | -1 to 21     | Heartbeat indicator LED (-1 = disabled)  |
+| `WIFI_LED_GPIO`             | 13       | -1 to 21     | Wi-Fi status LED (-1 = disabled)         |
 | `WIFI_STA_MAX_RETRIES`      | 3        | 1-20         | STA retries before SmartConfig fallback  |
-| `WIFI_STA_RETRY_INTERVAL_MS`| 2000     | 500-30000    | Delay between STA retries (ms)           |
+| `WIFI_STA_RETRY_INTERVAL_MS`| 500      | 500-30000    | Delay between STA retries (ms)           |
 
 ## Project Structure
 
@@ -160,7 +160,7 @@ When no PC is controlling the LCD (heartbeat lost), the display shows:
 ```
 WiFi: Connected
 IP:192.168.1.100
-Port:5000
+Port:2400
 PC: Waiting...
 ```
 
