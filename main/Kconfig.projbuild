@@ -1,0 +1,51 @@
+menu "UDP LCD Controller Configuration"
+
+    config UDP_LCD_PORT
+        int "UDP listening port"
+        default 5000
+        range 1024 65535
+        help
+            UDP port number the device listens on for LCD control packets.
+
+    config LCD_I2C_SDA_PIN
+        int "I2C SDA GPIO pin"
+        default 4
+        range 0 21
+        help
+            GPIO pin number for I2C SDA line.
+
+    config LCD_I2C_SCL_PIN
+        int "I2C SCL GPIO pin"
+        default 5
+        range 0 21
+        help
+            GPIO pin number for I2C SCL line.
+
+    config LCD_I2C_ADDR
+        hex "PCF8574A I2C address"
+        default 0x3F
+        range 0x38 0x3F
+        help
+            7-bit I2C address of the PCF8574A I/O expander.
+            Standard backpack address range: 0x38-0x3F.
+
+    config LCD_DEFAULT_COLS
+        int "Default LCD columns"
+        default 20
+        help
+            Default column count before CMD_LCD_INIT overrides.
+
+    config LCD_DEFAULT_ROWS
+        int "Default LCD rows"
+        default 4
+        range 1 4
+        help
+            Default row count before CMD_LCD_INIT overrides.
+
+    config LCD_I2C_FREQ_HZ
+        int "I2C clock frequency (Hz)"
+        default 100000
+        help
+            I2C master clock speed in Hz. 100000 for standard mode.
+
+endmenu
