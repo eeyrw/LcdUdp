@@ -1,5 +1,6 @@
 /*
- * Wi-Fi Station manager with SmartConfig (EspTouch) provisioning.
+ * Wi-Fi Station manager with SmartConfig (EspTouch) provisioning
+ * and Wi-Fi status LED indicator.
  *
  * Flow:
  *   1. Attempt to load SSID/password from NVS.
@@ -7,6 +8,12 @@
  *   3. If not found or connect fails, start SmartConfig.
  *   4. On SmartConfig success, save credentials to NVS.
  *   5. Block until IP address obtained.
+ *
+ * LED behavior (CONFIG_WIFI_LED_GPIO):
+ *   - SmartConfig: fast blink (200ms toggle)
+ *   - Connected:   steady on
+ *   - Disconnected: off
+ *   - Set GPIO to -1 in menuconfig to disable.
  */
 
 #include "network.h"
@@ -17,9 +24,12 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
+#include "sdkconfig.h"
 #include <string.h>
 
 static const char *TAG = "wifi_mgr";
@@ -34,14 +44,93 @@ static const char *TAG = "wifi_mgr";
 #define WIFI_FAIL_BIT       BIT1
 #define SC_DONE_BIT         BIT2
 
-/* Max STA connection retries before falling back to SmartConfig */
-#define MAX_STA_RETRIES     5
-
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static int  s_retry_count  = 0;
 static bool s_has_stored_creds = false;
 static bool s_connected = false;
 static esp_ip4_addr_t s_ip_addr;
+static TimerHandle_t s_retry_timer = NULL;
+
+/* ---- Delayed retry callback (runs from timer daemon task) ---- */
+
+static void retry_connect_cb(TimerHandle_t timer)
+{
+    (void)timer;
+    ESP_LOGI(TAG, "Retrying STA connection (%d/%d)...",
+             s_retry_count, CONFIG_WIFI_STA_MAX_RETRIES);
+    esp_wifi_connect();
+}
+
+/* ---- Wi-Fi LED ---- */
+
+static bool s_wifi_led_enabled = false;
+static TimerHandle_t s_wifi_led_timer = NULL;
+static bool s_wifi_led_state = false;
+
+static void wifi_led_init(void)
+{
+#if CONFIG_WIFI_LED_GPIO >= 0
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << CONFIG_WIFI_LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    if (gpio_config(&io_conf) == ESP_OK) {
+        gpio_set_level(CONFIG_WIFI_LED_GPIO, 0);
+        s_wifi_led_enabled = true;
+    }
+#endif
+}
+
+static void wifi_led_set(bool on)
+{
+#if CONFIG_WIFI_LED_GPIO >= 0
+    if (s_wifi_led_enabled) {
+        gpio_set_level(CONFIG_WIFI_LED_GPIO, on ? 1 : 0);
+    }
+#endif
+}
+
+static void wifi_led_blink_cb(TimerHandle_t timer)
+{
+    (void)timer;
+    s_wifi_led_state = !s_wifi_led_state;
+    wifi_led_set(s_wifi_led_state);
+}
+
+static void wifi_led_start_blink(void)
+{
+    if (!s_wifi_led_enabled) return;
+    if (!s_wifi_led_timer) {
+        s_wifi_led_timer = xTimerCreate("wifi_led", pdMS_TO_TICKS(200),
+                                         pdTRUE, NULL, wifi_led_blink_cb);
+    }
+    if (s_wifi_led_timer) {
+        xTimerStart(s_wifi_led_timer, 0);
+    }
+}
+
+static void wifi_led_stop_blink(void)
+{
+    if (s_wifi_led_timer) {
+        xTimerStop(s_wifi_led_timer, 0);
+    }
+    s_wifi_led_state = false;
+}
+
+static void wifi_led_on(void)
+{
+    wifi_led_stop_blink();
+    wifi_led_set(true);
+}
+
+static void wifi_led_off(void)
+{
+    wifi_led_stop_blink();
+    wifi_led_set(false);
+}
 
 /* ---- NVS helpers ---- */
 
@@ -82,6 +171,7 @@ static esp_err_t nvs_save_wifi_credentials(const char *ssid, const char *passwor
 static void start_smartconfig(void)
 {
     ESP_LOGI(TAG, "Starting SmartConfig (EspTouch)...");
+    wifi_led_start_blink();
     esp_smartconfig_set_type(SC_TYPE_ESPTOUCH);
     smartconfig_start_config_t sc_cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_smartconfig_start(&sc_cfg));
@@ -106,13 +196,23 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
         case WIFI_EVENT_STA_DISCONNECTED:
             s_connected = false;
+            wifi_led_off();
             s_retry_count++;
-            if (s_retry_count < MAX_STA_RETRIES) {
-                ESP_LOGW(TAG, "Disconnected, retrying (%d/%d)...",
-                         s_retry_count, MAX_STA_RETRIES);
-                esp_wifi_connect();
+            if (s_retry_count < CONFIG_WIFI_STA_MAX_RETRIES) {
+                ESP_LOGW(TAG, "Disconnected, will retry in %dms (%d/%d)...",
+                         CONFIG_WIFI_STA_RETRY_INTERVAL_MS,
+                         s_retry_count, CONFIG_WIFI_STA_MAX_RETRIES);
+                /* Delay retry — don't block the event task */
+                if (s_retry_timer) {
+                    xTimerChangePeriod(s_retry_timer,
+                                       pdMS_TO_TICKS(CONFIG_WIFI_STA_RETRY_INTERVAL_MS), 0);
+                    xTimerStart(s_retry_timer, 0);
+                } else {
+                    esp_wifi_connect(); /* fallback if timer unavailable */
+                }
             } else {
-                ESP_LOGW(TAG, "Max retries reached, starting SmartConfig");
+                ESP_LOGW(TAG, "Max retries (%d) reached, starting SmartConfig",
+                         CONFIG_WIFI_STA_MAX_RETRIES);
                 s_retry_count = 0;
                 s_has_stored_creds = false;
                 start_smartconfig();
@@ -127,6 +227,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         s_ip_addr = event->ip_info.ip;
         s_connected = true;
         s_retry_count = 0;
+        wifi_led_on();
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
 
@@ -185,6 +286,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 esp_err_t wifi_manager_init(void)
 {
+    /* Initialize Wi-Fi status LED */
+    wifi_led_init();
+
+    /* Create one-shot retry timer for delayed reconnection */
+    s_retry_timer = xTimerCreate("wifi_retry",
+                                  pdMS_TO_TICKS(CONFIG_WIFI_STA_RETRY_INTERVAL_MS),
+                                  pdFALSE, NULL, retry_connect_cb);
+
     s_wifi_event_group = xEventGroupCreate();
     if (!s_wifi_event_group) {
         return ESP_ERR_NO_MEM;

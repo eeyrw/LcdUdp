@@ -1,5 +1,6 @@
 /*
- * Heartbeat: periodic device heartbeat sender + PC peer miss tracking.
+ * Heartbeat: periodic device heartbeat sender + PC peer miss tracking
+ *            + LED heartbeat indicator.
  *
  * Design per protocol spec §12:
  * - Device sends CMD_HEARTBEAT (ROLE=0x02) every HB_INTERVAL_MS.
@@ -7,6 +8,9 @@
  * - When a PC heartbeat (ROLE=0x01) is received, miss_count resets to 0.
  * - If miss_count >= HB_MISS_MAX, peer is considered disconnected.
  * - Heartbeats are independent of business commands.
+ *
+ * LED: toggles on each heartbeat cycle (CONFIG_HEARTBEAT_LED_GPIO).
+ *      Set GPIO to -1 in menuconfig to disable.
  */
 
 #include "heartbeat.h"
@@ -15,6 +19,7 @@
 #include "lcd_driver.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
@@ -51,11 +56,34 @@ static void heartbeat_task(void *arg)
     (void)arg;
     s_boot_time_ms = esp_timer_get_time() / 1000;
 
+    /* Initialize heartbeat LED if configured */
+    bool led_enabled = false;
+    bool led_state = false;
+#if CONFIG_HEARTBEAT_LED_GPIO >= 0
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << CONFIG_HEARTBEAT_LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    if (gpio_config(&io_conf) == ESP_OK) {
+        gpio_set_level(CONFIG_HEARTBEAT_LED_GPIO, 0);
+        led_enabled = true;
+    }
+#endif
+
     ESP_LOGI(TAG, "Heartbeat task started (interval=%dms, miss_max=%d)",
              HB_INTERVAL_MS, HB_MISS_MAX);
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(HB_INTERVAL_MS));
+
+        /* Toggle heartbeat LED */
+        if (led_enabled) {
+            led_state = !led_state;
+            gpio_set_level(CONFIG_HEARTBEAT_LED_GPIO, led_state ? 1 : 0);
+        }
 
         /* Compute uptime in seconds */
         int64_t now_ms = esp_timer_get_time() / 1000;

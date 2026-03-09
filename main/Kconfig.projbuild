@@ -48,4 +48,39 @@ menu "UDP LCD Controller Configuration"
         help
             I2C master clock speed in Hz. 100000 for standard mode.
 
+    config HEARTBEAT_LED_GPIO
+        int "Heartbeat LED GPIO pin"
+        default 8
+        range -1 21
+        help
+            GPIO pin for the heartbeat indicator LED.
+            The LED toggles on each heartbeat cycle (every 3s).
+            Set to -1 to disable the LED.
+
+    config WIFI_LED_GPIO
+        int "Wi-Fi status LED GPIO pin"
+        default 10
+        range -1 21
+        help
+            GPIO pin for the Wi-Fi status indicator LED.
+            SmartConfig provisioning: fast blink.
+            Connected: steady on. Disconnected: off.
+            Set to -1 to disable the LED.
+
+    config WIFI_STA_MAX_RETRIES
+        int "Wi-Fi STA max connection retries"
+        default 3
+        range 1 20
+        help
+            Number of STA connection attempts before falling back
+            to SmartConfig provisioning.
+
+    config WIFI_STA_RETRY_INTERVAL_MS
+        int "Wi-Fi STA retry interval (ms)"
+        default 2000
+        range 500 30000
+        help
+            Delay in milliseconds between consecutive STA
+            connection retry attempts.
+
 endmenu
